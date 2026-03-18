@@ -25,14 +25,16 @@ _DISCONNECT_PREFIX = (
 
 PATTERNS = [
     # Non-whitelisted player trying to join
+    # "You are not white-listed on this server!"
     {
         "name": "not_whitelisted",
         "label": "Not whitelisted",
         "pattern": re.compile(
-            _DISCONNECT_PREFIX + r"You are not whitelisted on this server"
+            _DISCONNECT_PREFIX + r"You are not white-?listed on this server"
         ),
     },
-    # Failed to verify username (cracked client / invalid session)
+    # Failed to verify username (cracked client / auth failure)
+    # Disconnecting line: "Failed to verify username!"
     {
         "name": "failed_verify_username",
         "label": "Failed to verify username",
@@ -40,12 +42,14 @@ PATTERNS = [
             _DISCONNECT_PREFIX + r"Failed to verify username"
         ),
     },
-    # Invalid session (e.g. stolen/expired token)
+    # Invalid session (expired or stolen token)
+    # User Authenticator line: "Username '<name>' tried to join with an invalid session"
     {
         "name": "invalid_session",
         "label": "Invalid session",
         "pattern": re.compile(
-            _DISCONNECT_PREFIX + r"Invalid session"
+            r"\[(?P<time>\d{2}:\d{2}:\d{2})\].*"
+            r"Username '(?P<username>[^']+)' tried to join with an invalid session"
         ),
     },
     # User Authenticator failures (no IP/username in structured form)
