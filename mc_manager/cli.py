@@ -64,10 +64,12 @@ def get_log_files(sftp):
     if sftp.file_exists("logs/latest.log"):
         log_files.append("logs/latest.log")
 
-    # Check for archived logs (gzipped logs are not supported yet)
+    # Check for archived logs (including gzipped)
     try:
         for name in sftp.list_dir("logs"):
-            if name.endswith(".log") and name != "latest.log":
+            if name == "latest.log":
+                continue
+            if name.endswith(".log") or name.endswith(".log.gz"):
                 log_files.append(f"logs/{name}")
     except FileNotFoundError:
         pass
@@ -146,7 +148,10 @@ def main():
             for log_file in log_files:
                 print(f"Scanning {log_file}...")
                 try:
-                    content = sftp.read_text(log_file)
+                    if log_file.endswith(".gz"):
+                        content = sftp.read_gzipped_text(log_file)
+                    else:
+                        content = sftp.read_text(log_file)
                     events = parse_log(content)
                     all_events.extend(events)
                 except FileNotFoundError:

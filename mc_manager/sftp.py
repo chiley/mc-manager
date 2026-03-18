@@ -1,5 +1,6 @@
 """SFTP connection manager for Minecraft server file access."""
 
+import gzip
 import os
 import json
 import paramiko
@@ -46,6 +47,13 @@ class SFTPClient:
         remote = self._remote_path(relative_path)
         with self._sftp.open(remote, "r") as f:
             return f.read().decode("utf-8", errors="replace")
+
+    def read_gzipped_text(self, relative_path):
+        """Read a gzipped text file from the server and return its contents."""
+        remote = self._remote_path(relative_path)
+        with self._sftp.open(remote, "rb") as f:
+            compressed = f.read()
+        return gzip.decompress(compressed).decode("utf-8", errors="replace")
 
     def read_json(self, relative_path):
         """Read and parse a JSON file from the server."""
