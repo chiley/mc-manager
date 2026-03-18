@@ -6,10 +6,22 @@ from datetime import datetime, timezone
 
 BANNED_PLAYERS_FILE = "banned-players.json"
 BANNED_IPS_FILE = "banned-ips.json"
+WHITELIST_FILE = "whitelist.json"
 
 
 def _now_str():
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S +0000")
+
+
+def load_whitelist(sftp):
+    """Load the current whitelist.json from the server.
+
+    Returns a set of lowercased whitelisted usernames.
+    """
+    if not sftp.file_exists(WHITELIST_FILE):
+        return set()
+    entries = sftp.read_json(WHITELIST_FILE)
+    return {entry["name"].lower() for entry in entries}
 
 
 def load_banned_players(sftp):
@@ -78,13 +90,32 @@ def save_banned_ips(sftp, banned_list):
 def apply_bans(sftp, summary, ban_players=True, ban_ips=True, dry_run=False):
     """Apply bans based on a LogSummary.
 
+    Whitelisted players and their associated IPs are never banned.
     Returns a dict with counts of new bans applied.
     """
-    results = {"players_banned": 0, "ips_banned": 0, "players_skipped": 0, "ips_skipped": 0}
+    results = {
+        "players_banned": 0, "ips_banned": 0,
+        "players_skipped": 0, "ips_skipped": 0,
+        "players_whitelisted": 0, "ips_whitelisted": 0,
+    }
+
+    whitelist = load_whitelist(sftp)
+
+    # Build set of IPs associated with whitelisted users
+    whitelisted_ips = set()
+    for username, event_types in summary.usernames.items():
+        if username.lower() in whitelist:
+            # Find all IPs this whitelisted user appeared with
+            for event in summary.events:
+                if event.username and event.username.lower() == username.lower() and event.ip_address:
+                    whitelisted_ips.add(event.ip_address)
 
     if ban_players and summary.usernames:
         banned_players = load_banned_players(sftp)
         for username in summary.usernames:
+            if username.lower() in whitelist:
+                results["players_whitelisted"] += 1
+                continue
             if ban_player(banned_players, username):
                 results["players_banned"] += 1
             else:
@@ -95,6 +126,9 @@ def apply_bans(sftp, summary, ban_players=True, ban_ips=True, dry_run=False):
     if ban_ips and summary.ip_addresses:
         banned_ips = load_banned_ips(sftp)
         for ip_address in summary.ip_addresses:
+            if ip_address in whitelisted_ips:
+                results["ips_whitelisted"] += 1
+                continue
             if ban_ip(banned_ips, ip_address):
                 results["ips_banned"] += 1
             else:

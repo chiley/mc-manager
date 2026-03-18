@@ -7,14 +7,17 @@ from dotenv import load_dotenv
 
 from .sftp import SFTPClient
 from .log_parser import parse_log, summarize_events, PATTERNS
-from .blacklist import apply_bans
+from .blacklist import apply_bans, load_whitelist
 
 
 EVENT_LABELS = {p["name"]: p["label"] for p in PATTERNS}
 
 
-def print_summary(summary, verbose=False):
+def print_summary(summary, whitelist=None, verbose=False):
     """Print a human-readable summary of suspicious events."""
+    if whitelist is None:
+        whitelist = set()
+
     if summary.total_events == 0:
         print("No suspicious events found.")
         return
@@ -44,7 +47,9 @@ def print_summary(summary, verbose=False):
                     parts.append(f"ip={e.ip_address}")
                 if e.timestamp:
                     parts.append(f"at {e.timestamp}")
-                print(f"    - {', '.join(parts)}")
+                is_wl = e.username and e.username.lower() in whitelist
+                suffix = " [WHITELISTED]" if is_wl else ""
+                print(f"    - {', '.join(parts)}{suffix}")
 
     print(f"\nUnique usernames: {', '.join(sorted(summary.usernames)) or 'none'}")
     print(f"Unique IPs: {', '.join(sorted(summary.ip_addresses)) or 'none'}")
@@ -162,7 +167,13 @@ def main():
                 all_events = [e for e in all_events if e.event_type in args.filter]
 
             summary = summarize_events(all_events)
-            print_summary(summary, verbose=args.verbose)
+
+            # Load whitelist to flag whitelisted users in output
+            whitelist = load_whitelist(sftp)
+            if whitelist:
+                print(f"Loaded whitelist ({len(whitelist)} player(s))")
+
+            print_summary(summary, whitelist=whitelist, verbose=args.verbose)
 
             # Apply bans if requested
             if (args.ban or args.dry_run) and summary.total_events > 0:
@@ -178,9 +189,11 @@ def main():
                 )
                 action = "Would ban" if args.dry_run else "Banned"
                 print(f"\n  {action} {results['players_banned']} new player(s) "
-                      f"(skipped {results['players_skipped']} already banned)")
+                      f"(skipped {results['players_skipped']} already banned, "
+                      f"{results['players_whitelisted']} whitelisted)")
                 print(f"  {action} {results['ips_banned']} new IP(s) "
-                      f"(skipped {results['ips_skipped']} already banned)")
+                      f"(skipped {results['ips_skipped']} already banned, "
+                      f"{results['ips_whitelisted']} whitelisted)")
 
                 if not args.dry_run and (results["players_banned"] or results["ips_banned"]):
                     print("\nBan lists updated on server.")
