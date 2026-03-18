@@ -8,6 +8,8 @@ from dotenv import load_dotenv
 from .sftp import SFTPClient
 from .log_parser import parse_log, summarize_events, PATTERNS
 from .blacklist import apply_bans, load_whitelist
+from .activity_parser import parse_activity_log
+from .stats import build_stats, print_stats, STAT_SECTIONS
 
 
 EVENT_LABELS = {p["name"]: p["label"] for p in PATTERNS}
@@ -92,8 +94,18 @@ def main():
     parser.add_argument(
         "--scan",
         action="store_true",
-        default=True,
-        help="Scan logs for suspicious events (default action).",
+        help="Scan logs for suspicious events (default when no other action given).",
+    )
+    parser.add_argument(
+        "--stats",
+        action="store_true",
+        help="Show player activity statistics and server analytics.",
+    )
+    parser.add_argument(
+        "--stats-filter",
+        choices=STAT_SECTIONS,
+        nargs="+",
+        help="Only show specific stat categories.",
     )
     parser.add_argument(
         "--ban",
@@ -134,6 +146,10 @@ def main():
 
     args = parser.parse_args()
 
+    # Default to --scan if no action is specified
+    do_scan = args.scan or (not args.stats and not args.ban and not args.dry_run)
+    do_stats = args.stats
+
     try:
         with SFTPClient() as sftp:
             print(f"Connected to {sftp.host}:{sftp.port}")
@@ -150,6 +166,7 @@ def main():
 
             # Parse logs
             all_events = []
+            all_activity_events = []
             for log_file in log_files:
                 print(f"Scanning {log_file}...")
                 try:
@@ -157,46 +174,60 @@ def main():
                         content = sftp.read_gzipped_text(log_file)
                     else:
                         content = sftp.read_text(log_file)
-                    events = parse_log(content)
-                    all_events.extend(events)
+
+                    if do_scan or args.ban or args.dry_run:
+                        events = parse_log(content)
+                        all_events.extend(events)
+
+                    if do_stats:
+                        activity_events = parse_activity_log(content)
+                        all_activity_events.extend(activity_events)
                 except FileNotFoundError:
                     print(f"  Warning: {log_file} not found, skipping.")
 
-            # Filter events if requested
-            if args.filter:
-                all_events = [e for e in all_events if e.event_type in args.filter]
+            # Security scan output
+            if do_scan or args.ban or args.dry_run:
+                # Filter events if requested
+                if args.filter:
+                    all_events = [e for e in all_events if e.event_type in args.filter]
 
-            summary = summarize_events(all_events)
+                summary = summarize_events(all_events)
 
-            # Load whitelist to flag whitelisted users in output
-            whitelist = load_whitelist(sftp)
-            if whitelist:
-                print(f"Loaded whitelist ({len(whitelist)} player(s))")
+                # Load whitelist to flag whitelisted users in output
+                whitelist = load_whitelist(sftp)
+                if whitelist:
+                    print(f"Loaded whitelist ({len(whitelist)} player(s))")
 
-            print_summary(summary, whitelist=whitelist, verbose=args.verbose)
+                print_summary(summary, whitelist=whitelist, verbose=args.verbose)
 
-            # Apply bans if requested
-            if (args.ban or args.dry_run) and summary.total_events > 0:
-                if args.dry_run:
-                    print(f"\n{'─' * 60}")
-                    print("DRY RUN - no changes will be made:")
-                results = apply_bans(
-                    sftp,
-                    summary,
-                    ban_players=not args.no_ban_players,
-                    ban_ips=not args.no_ban_ips,
-                    dry_run=args.dry_run,
-                )
-                action = "Would ban" if args.dry_run else "Banned"
-                print(f"\n  {action} {results['players_banned']} new player(s) "
-                      f"(skipped {results['players_skipped']} already banned, "
-                      f"{results['players_whitelisted']} whitelisted)")
-                print(f"  {action} {results['ips_banned']} new IP(s) "
-                      f"(skipped {results['ips_skipped']} already banned, "
-                      f"{results['ips_whitelisted']} whitelisted)")
+                # Apply bans if requested
+                if (args.ban or args.dry_run) and summary.total_events > 0:
+                    if args.dry_run:
+                        print(f"\n{'─' * 60}")
+                        print("DRY RUN - no changes will be made:")
+                    results = apply_bans(
+                        sftp,
+                        summary,
+                        ban_players=not args.no_ban_players,
+                        ban_ips=not args.no_ban_ips,
+                        dry_run=args.dry_run,
+                    )
+                    action = "Would ban" if args.dry_run else "Banned"
+                    print(f"\n  {action} {results['players_banned']} new player(s) "
+                          f"(skipped {results['players_skipped']} already banned, "
+                          f"{results['players_whitelisted']} whitelisted)")
+                    print(f"  {action} {results['ips_banned']} new IP(s) "
+                          f"(skipped {results['ips_skipped']} already banned, "
+                          f"{results['ips_whitelisted']} whitelisted)")
 
-                if not args.dry_run and (results["players_banned"] or results["ips_banned"]):
-                    print("\nBan lists updated on server.")
+                    if not args.dry_run and (results["players_banned"] or results["ips_banned"]):
+                        print("\nBan lists updated on server.")
+
+            # Stats output
+            if do_stats and all_activity_events:
+                server_stats = build_stats(all_activity_events)
+                print_stats(server_stats, verbose=args.verbose,
+                            sections=args.stats_filter)
 
     except KeyError as e:
         print(f"Error: Missing environment variable {e}. "
