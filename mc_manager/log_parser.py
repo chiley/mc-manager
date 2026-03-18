@@ -16,11 +16,16 @@ class SuspiciousEvent:
 
 # Patterns for suspicious log entries.
 # Minecraft log format: [HH:MM:SS] [Thread/LEVEL]: Message
-# Common sub-pattern for Disconnecting lines with GameProfile.
-# Uses .*? instead of [^}]* to handle nested braces in properties={}.
+#
+# Disconnect lines come in two formats depending on server version:
+#   Simple:      Disconnecting USERNAME (/IP:PORT): MESSAGE
+#   GameProfile: Disconnecting com.mojang.authlib.GameProfile{...name='USERNAME'...} (/IP:PORT): MESSAGE
+#
+# The prefix handles both via alternation with separate named groups.
 _DISCONNECT_PREFIX = (
     r"\[(?P<time>\d{2}:\d{2}:\d{2})\].*Disconnecting\s+"
-    r".*?name='(?P<username>[^']+)'.*?\(/(?P<ip>[^:]+):\d+\):\s+"
+    r"(?:.*?name='(?P<gp_user>[A-Za-z0-9_]+)'.*?|(?P<simple_user>[A-Za-z0-9_]+)\s+)"
+    r"\(/(?P<ip>[^:]+):\d+\):\s+"
 )
 
 PATTERNS = [
@@ -34,7 +39,7 @@ PATTERNS = [
         ),
     },
     # Failed to verify username (cracked client / auth failure)
-    # Disconnecting line: "Failed to verify username!"
+    # "Failed to verify username!"
     {
         "name": "failed_verify_username",
         "label": "Failed to verify username",
@@ -43,7 +48,7 @@ PATTERNS = [
         ),
     },
     # Invalid session (expired or stolen token)
-    # User Authenticator line: "Username '<name>' tried to join with an invalid session"
+    # "Username '<name>' tried to join with an invalid session"
     {
         "name": "invalid_session",
         "label": "Invalid session",
@@ -80,9 +85,12 @@ def parse_log(content: str) -> list[SuspiciousEvent]:
             match = entry["pattern"].search(line)
             if match:
                 groups = match.groupdict()
+                username = (groups.get("username")
+                            or groups.get("gp_user")
+                            or groups.get("simple_user"))
                 events.append(SuspiciousEvent(
                     event_type=entry["name"],
-                    username=groups.get("username"),
+                    username=username,
                     ip_address=groups.get("ip"),
                     raw_line=line.strip(),
                     timestamp=groups.get("time"),
